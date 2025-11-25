@@ -1,0 +1,5 @@
+# Ignore all files in animal_data directory
+animal_data/
+
+# Ignore processed images
+processed_images/

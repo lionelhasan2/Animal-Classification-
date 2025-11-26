@@ -2,39 +2,64 @@ import os
 import cv2
 import numpy as np
 import random
+import shutil
 from tqdm import tqdm
 
 # --- Configuration ---
 DOWNLOAD_DIR = "animal_data"
 PROCESSED_DIR = "processed_images"
-TARGET_SIZE = (416, 416) # Common size for YOLO models
-FLIP_PROBABILITY = 0.1  # 10% of images will be flipped
+TARGET_SIZE = (416, 416)
+AUGMENT_PROBABILITY = 0.1
 
-def process_images(input_dir, output_dir, target_size):
+def copy_label_file(src_labels_dir, dst_labels_dir, original_filename, new_filename):
+    """Copy label file with new filename to match processed image."""
+    if not src_labels_dir or not os.path.exists(src_labels_dir):
+        return False
+    
+    # Convert image filename to label filename
+    original_label = os.path.splitext(original_filename)[0] + '.txt'
+    new_label = os.path.splitext(new_filename)[0] + '.txt'
+    
+    src_label_path = os.path.join(src_labels_dir, original_label)
+    
+    if os.path.exists(src_label_path):
+        os.makedirs(dst_labels_dir, exist_ok=True)
+        dst_label_path = os.path.join(dst_labels_dir, new_label)
+        shutil.copy2(src_label_path, dst_label_path)
+        return True
+    return False
+
+def augment_brightness(img, factor_range=(0.7, 1.3)):
+    """Adjust brightness without changing object positions."""
+    factor = random.uniform(factor_range[0], factor_range[1])
+    augmented = cv2.convertScaleAbs(img, alpha=factor, beta=0)
+    return np.clip(augmented, 0, 255).astype(np.uint8)
+
+def process_images(input_dir, output_dir, labels_dir, target_size, augment=False):
     """
-    Performs resizing, normalization, and geometric transformations.
+    Process images and copy corresponding labels.
     """
     os.makedirs(output_dir, exist_ok=True)
     
-    # Get list of image files
+    # Create labels directory in processed folder
+    output_labels_dir = os.path.join(os.path.dirname(output_dir), 'labels')
+    
     image_files = [f for f in os.listdir(input_dir) if f.lower().endswith(('.png', '.jpg', '.jpeg'))]
     
     print(f"Starting image processing from '{input_dir}'...")
     image_count = 0
-    flipped_count = 0
+    augmented_count = 0
+    labels_copied = 0
     
     for filename in tqdm(image_files, desc="Processing images"):
         image_path = os.path.join(input_dir, filename)
         
-        # 1. Load Image
         img = cv2.imread(image_path)
         if img is None:
             print(f"Warning: Could not read image {filename}. Skipping.")
             continue
 
         # --- Preprocessing Steps ---
-
-        # 2. Resizing with Aspect Ratio Preservation (Padded Resize)
         h, w, _ = img.shape
         
         # Calculate scaling factor
@@ -50,47 +75,71 @@ def process_images(input_dir, output_dir, target_size):
         top, bottom = pad_h // 2, pad_h - (pad_h // 2)
         left, right = pad_w // 2, pad_w - (pad_w // 2)
         
-        # Apply padding (using a constant black color)
+        # Apply padding
         padded_img = cv2.copyMakeBorder(
-            resized_img, 
-            top, bottom, left, right, 
-            cv2.BORDER_CONSTANT, 
-            value=[0, 0, 0]
+            resized_img, top, bottom, left, right, 
+            cv2.BORDER_CONSTANT, value=[0, 0, 0]
         )
         
-        # 3. Normalization (0.0 to 1.0)
+        # Normalize
         normalized_img = padded_img.astype(np.float32) / 255.0
-
-        # --- Save Original Image ---
         save_original = (normalized_img * 255).astype(np.uint8)
-        cv2.imwrite(os.path.join(output_dir, f"orig_{filename}"), save_original)
+        
+        # Save original with same filename (no prefix)
+        cv2.imwrite(os.path.join(output_dir, filename), save_original)
+        
+        # Copy original label file
+        if copy_label_file(labels_dir, output_labels_dir, filename, filename):
+            labels_copied += 1
 
-        # --- Geometric Transformations (Data Augmentation) ---
-        # 4. Horizontal Flip (Mirroring) - Only applied to 10% of images randomly
-        if random.random() < FLIP_PROBABILITY:
-            flipped_img = cv2.flip(normalized_img, 1)
-            save_flipped = (flipped_img * 255).astype(np.uint8)
-            cv2.imwrite(os.path.join(output_dir, f"flip_{filename}"), save_flipped)
-            flipped_count += 1
+        # --- Data Augmentation (Training Only) ---
+        if augment and random.random() < AUGMENT_PROBABILITY:
+            # Create augmented image
+            augmented_img = augment_brightness(save_original)
+            
+            # Save with prefix
+            base_name = os.path.splitext(filename)[0]
+            ext = os.path.splitext(filename)[1]
+            aug_filename = f"aug_brightness_{base_name}{ext}"
+            cv2.imwrite(os.path.join(output_dir, aug_filename), augmented_img)
+            
+            # Copy label file for augmented image
+            if copy_label_file(labels_dir, output_labels_dir, filename, aug_filename):
+                labels_copied += 1
+            
+            augmented_count += 1
 
         image_count += 1
 
-    total_saved = image_count + flipped_count
-    print(f"Finished processing. Processed {image_count} images, saved {total_saved} total ({flipped_count} flipped) to '{output_dir}'.")
-
+    total_saved = image_count + augmented_count
+    print(f"Finished processing. Processed {image_count} images, saved {total_saved} total ({augmented_count} augmented) to '{output_dir}'.")
+    print(f"Copied {labels_copied} label files to '{output_labels_dir}'.")
 
 if __name__ == "__main__":
-    # Verify dataset directory exists
     if not os.path.exists(DOWNLOAD_DIR):
         print(f"Error: '{DOWNLOAD_DIR}' directory not found.")
         exit(1)
     
-    # Process train, val, and test images
-    splits = ['train', 'val', 'test']
+    # Define splits with labels
+    splits = {
+        'train': {
+            'images': os.path.join(DOWNLOAD_DIR, 'train', 'images'),
+            'labels': os.path.join(DOWNLOAD_DIR, 'train', 'labels')
+        },
+        'val': {
+            'images': os.path.join(DOWNLOAD_DIR, 'val', 'images'),
+            'labels': os.path.join(DOWNLOAD_DIR, 'val', 'labels')
+        },
+        'test': {
+            'images': os.path.join(DOWNLOAD_DIR, 'test'),
+            'labels': None  # Test usually has no labels
+        }
+    }
     
-    for split in splits:
-        images_dir = os.path.join(DOWNLOAD_DIR, split, 'images')
-        output_split_dir = os.path.join(PROCESSED_DIR, split)
+    for split, paths in splits.items():
+        images_dir = paths['images']
+        labels_dir = paths['labels']
+        output_split_dir = os.path.join(PROCESSED_DIR, split, 'images')
         
         if not os.path.exists(images_dir):
             print(f"Skipping '{split}' - directory not found at {images_dir}")
@@ -102,7 +151,6 @@ if __name__ == "__main__":
             print(f"Skipping '{split}' - no images found")
             continue
         
-        # Check if already processed
         if os.path.exists(output_split_dir) and os.listdir(output_split_dir):
             print(f"Skipping '{split}' - already processed images found in {output_split_dir}")
             continue
@@ -112,5 +160,6 @@ if __name__ == "__main__":
         print(f"{'='*60}")
         print(f"Found {image_count} images in {images_dir}")
         
-        # Process images
-        process_images(images_dir, output_split_dir, TARGET_SIZE) 
+        # Only augment training images
+        augment = (split == 'train')
+        process_images(images_dir, output_split_dir, labels_dir, TARGET_SIZE, augment=augment)

@@ -2,7 +2,6 @@ import os
 import cv2
 import numpy as np
 import random
-import shutil
 from tqdm import tqdm
 
 # --- Configuration ---
@@ -11,8 +10,42 @@ PROCESSED_DIR = "processed_images"
 TARGET_SIZE = (416, 416)
 AUGMENT_PROBABILITY = 0.1
 
-def copy_label_file(src_labels_dir, dst_labels_dir, original_filename, new_filename):
-    """Copy label file with new filename to match processed image."""
+def extract_bounding_box(label_path, output_path):
+    """Extract only the bounding box from polygon labels"""
+    with open(label_path, 'r') as f:
+        content = f.read().strip()
+    
+    if content:
+        # Split and take only first 5 elements (class + bbox)
+        parts = content.split()
+        if len(parts) >= 5:
+            bbox_only = ' '.join(parts[:5])  # class x_center y_center width height
+            
+            with open(output_path, 'w') as f:
+                f.write(bbox_only + '\n')
+        else:
+            # Copy as-is if format is unexpected
+            with open(output_path, 'w') as f:
+                f.write(content)
+
+def flip_bounding_box_horizontal(bbox_line):
+    """Flip bounding box horizontally (x_center = 1.0 - x_center)"""
+    parts = bbox_line.strip().split()
+    if len(parts) >= 5:
+        class_id = parts[0]
+        x_center = float(parts[1])
+        y_center = parts[2]
+        width = parts[3]
+        height = parts[4]
+        
+        # Flip x_center: new_x = 1.0 - old_x
+        flipped_x = 1.0 - x_center
+        
+        return f"{class_id} {flipped_x} {y_center} {width} {height}\n"
+    return bbox_line
+
+def copy_label_file(src_labels_dir, dst_labels_dir, original_filename, new_filename, flip_horizontal=False):
+    """Copy and process label file with new filename to match processed image."""
     if not src_labels_dir or not os.path.exists(src_labels_dir):
         return False
     
@@ -25,7 +58,28 @@ def copy_label_file(src_labels_dir, dst_labels_dir, original_filename, new_filen
     if os.path.exists(src_label_path):
         os.makedirs(dst_labels_dir, exist_ok=True)
         dst_label_path = os.path.join(dst_labels_dir, new_label)
-        shutil.copy2(src_label_path, dst_label_path)
+        
+        # Read original label and extract bounding box
+        with open(src_label_path, 'r') as f:
+            content = f.read().strip()
+        
+        if content:
+            # Extract bounding box only
+            parts = content.split()
+            if len(parts) >= 5:
+                bbox_only = ' '.join(parts[:5])  # class x_center y_center width height
+                
+                # Apply horizontal flip if needed
+                if flip_horizontal:
+                    bbox_only = flip_bounding_box_horizontal(bbox_only).strip()
+                
+                with open(dst_label_path, 'w') as f:
+                    f.write(bbox_only + '\n')
+            else:
+                # Copy as-is if format is unexpected
+                with open(dst_label_path, 'w') as f:
+                    f.write(content)
+        
         return True
     return False
 
@@ -34,6 +88,10 @@ def augment_brightness(img, factor_range=(0.7, 1.3)):
     factor = random.uniform(factor_range[0], factor_range[1])
     augmented = cv2.convertScaleAbs(img, alpha=factor, beta=0)
     return np.clip(augmented, 0, 255).astype(np.uint8)
+
+def augment_horizontal_flip(img):
+    """Flip image horizontally."""
+    return cv2.flip(img, 1)
 
 def process_images(input_dir, output_dir, labels_dir, target_size, augment=False):
     """
@@ -88,26 +146,38 @@ def process_images(input_dir, output_dir, labels_dir, target_size, augment=False
         # Save original with same filename (no prefix)
         cv2.imwrite(os.path.join(output_dir, filename), save_original)
         
-        # Copy original label file
-        if copy_label_file(labels_dir, output_labels_dir, filename, filename):
+        # Copy original label file (extract bounding box only)
+        if copy_label_file(labels_dir, output_labels_dir, filename, filename, flip_horizontal=False):
             labels_copied += 1
 
         # --- Data Augmentation (Training Only) ---
         if augment and random.random() < AUGMENT_PROBABILITY:
-            # Create augmented image
-            augmented_img = augment_brightness(save_original)
-            
-            # Save with prefix
             base_name = os.path.splitext(filename)[0]
             ext = os.path.splitext(filename)[1]
-            aug_filename = f"aug_brightness_{base_name}{ext}"
-            cv2.imwrite(os.path.join(output_dir, aug_filename), augmented_img)
             
-            # Copy label file for augmented image
-            if copy_label_file(labels_dir, output_labels_dir, filename, aug_filename):
-                labels_copied += 1
+            # Brightness augmentation
+            if random.random() < 0.5:  # 50% chance for brightness
+                augmented_img = augment_brightness(save_original)
+                aug_filename = f"aug_brightness_{base_name}{ext}"
+                cv2.imwrite(os.path.join(output_dir, aug_filename), augmented_img)
+                
+                # Copy label file for brightness augmentation (no coordinate changes)
+                if copy_label_file(labels_dir, output_labels_dir, filename, aug_filename, flip_horizontal=False):
+                    labels_copied += 1
+                
+                augmented_count += 1
             
-            augmented_count += 1
+            # Horizontal flip augmentation
+            else:  # 50% chance for horizontal flip
+                flipped_img = augment_horizontal_flip(save_original)
+                flip_filename = f"aug_flip_{base_name}{ext}"
+                cv2.imwrite(os.path.join(output_dir, flip_filename), flipped_img)
+                
+                # Copy and modify label file for horizontal flip
+                if copy_label_file(labels_dir, output_labels_dir, filename, flip_filename, flip_horizontal=True):
+                    labels_copied += 1
+                
+                augmented_count += 1
 
         image_count += 1
 

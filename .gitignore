@@ -3,3 +3,7 @@ animal_data/
 
 # Ignore processed images
 processed_images/
+\processed_images
+
+# Ignore virtual environment
+\venv

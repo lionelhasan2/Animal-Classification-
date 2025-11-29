@@ -4,4 +4,7 @@ animal_data/
 # Ignore processed images
 processed_images/
 
+
 /venv
+/yolo_model
+*.pt

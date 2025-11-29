@@ -5,31 +5,38 @@ import random
 from tqdm import tqdm
 
 # --- Configuration ---
-DOWNLOAD_DIR = "animal_data"
+DATASET_DIR = "animal_data"
 PROCESSED_DIR = "processed_images"
 TARGET_SIZE = (416, 416)
 AUGMENT_PROBABILITY = 0.1
 
-def extract_bounding_box(label_path, output_path):
-    """Extract only the bounding box from polygon labels"""
-    with open(label_path, 'r') as f:
-        content = f.read().strip()
-    
-    if content:
-        # Split and take only first 5 elements (class + bbox)
-        parts = content.split()
-        if len(parts) >= 5:
-            bbox_only = ' '.join(parts[:5])  # class x_center y_center width height
-            
-            with open(output_path, 'w') as f:
-                f.write(bbox_only + '\n')
-        else:
-            # Copy as-is if format is unexpected
-            with open(output_path, 'w') as f:
-                f.write(content)
+def parse_label_line(label_line):
+    """Parse label line format: 'Bear 212.41856 134.383104 741.982208 627.37536'"""
+    parts = label_line.strip().split()
+    if len(parts) >= 5:
+        class_name = parts[0]
+        x_center = float(parts[1])
+        y_center = float(parts[2]) 
+        width = float(parts[3])
+        height = float(parts[4])
+        return class_name, x_center, y_center, width, height
+    return None
 
-def flip_bounding_box_horizontal(bbox_line):
-    """Flip bounding box horizontally (x_center = 1.0 - x_center)"""
+def convert_to_yolo_format(class_name, x_center, y_center, width, height, img_width, img_height, class_mapping):
+    """Convert absolute coordinates to YOLO normalized format"""
+    if class_name not in class_mapping:
+        return None
+    
+    class_id = class_mapping[class_name]
+    norm_x_center = x_center / img_width
+    norm_y_center = y_center / img_height
+    norm_width = width / img_width
+    norm_height = height / img_height
+    
+    return f"{class_id} {norm_x_center} {norm_y_center} {norm_width} {norm_height}"
+
+def flip_bounding_box_horizontal_yolo(bbox_line):
+    """Flip YOLO format bounding box horizontally"""
     parts = bbox_line.strip().split()
     if len(parts) >= 5:
         class_id = parts[0]
@@ -37,199 +44,288 @@ def flip_bounding_box_horizontal(bbox_line):
         y_center = parts[2]
         width = parts[3]
         height = parts[4]
-        
-        # Flip x_center: new_x = 1.0 - old_x
         flipped_x = 1.0 - x_center
-        
-        return f"{class_id} {flipped_x} {y_center} {width} {height}\n"
+        return f"{class_id} {flipped_x} {y_center} {width} {height}"
     return bbox_line
 
-def copy_label_file(src_labels_dir, dst_labels_dir, original_filename, new_filename, flip_horizontal=False):
-    """Copy and process label file with new filename to match processed image."""
-    if not src_labels_dir or not os.path.exists(src_labels_dir):
-        return False
+def flip_bounding_box_horizontal_original(bbox_line, img_width):
+    """Flip original format bounding box horizontally"""
+    parts = bbox_line.strip().split()
+    if len(parts) >= 5:
+        class_name = parts[0]
+        x_center = float(parts[1])
+        y_center = parts[2]
+        width = parts[3]
+        height = parts[4]
+        flipped_x = img_width - x_center
+        return f"{class_name} {flipped_x} {y_center} {width} {height}"
+    return bbox_line
+
+def process_label_file(label_path, img_width, img_height, class_mapping, flip_horizontal=False):
+    """Process label file and return both YOLO and original format labels"""
+    if not os.path.exists(label_path):
+        return None, None
     
-    # Convert image filename to label filename
-    original_label = os.path.splitext(original_filename)[0] + '.txt'
-    new_label = os.path.splitext(new_filename)[0] + '.txt'
+    yolo_labels = []
+    original_labels = []
     
-    src_label_path = os.path.join(src_labels_dir, original_label)
+    try:
+        with open(label_path, 'r') as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                    
+                parsed = parse_label_line(line)
+                if parsed:
+                    class_name, x_center, y_center, width, height = parsed
+                    
+                    if class_name not in class_mapping:
+                        continue
+                    
+                    yolo_line = convert_to_yolo_format(
+                        class_name, x_center, y_center, width, height, 
+                        img_width, img_height, class_mapping
+                    )
+                    
+                    original_line = f"{class_name} {x_center} {y_center} {width} {height}"
+                    
+                    if yolo_line:
+                        if flip_horizontal:
+                            yolo_line = flip_bounding_box_horizontal_yolo(yolo_line)
+                            original_line = flip_bounding_box_horizontal_original(original_line, img_width)
+                        
+                        yolo_labels.append(yolo_line)
+                        original_labels.append(original_line)
+    except Exception as e:
+        return None, None
     
-    if os.path.exists(src_label_path):
-        os.makedirs(dst_labels_dir, exist_ok=True)
-        dst_label_path = os.path.join(dst_labels_dir, new_label)
-        
-        # Read original label and extract bounding box
-        with open(src_label_path, 'r') as f:
-            content = f.read().strip()
-        
-        if content:
-            # Extract bounding box only
-            parts = content.split()
-            if len(parts) >= 5:
-                bbox_only = ' '.join(parts[:5])  # class x_center y_center width height
-                
-                # Apply horizontal flip if needed
-                if flip_horizontal:
-                    bbox_only = flip_bounding_box_horizontal(bbox_only).strip()
-                
-                with open(dst_label_path, 'w') as f:
-                    f.write(bbox_only + '\n')
-            else:
-                # Copy as-is if format is unexpected
-                with open(dst_label_path, 'w') as f:
-                    f.write(content)
-        
-        return True
-    return False
+    return yolo_labels, original_labels
 
 def augment_brightness(img, factor_range=(0.7, 1.3)):
-    """Adjust brightness without changing object positions."""
+    """Adjust brightness"""
     factor = random.uniform(factor_range[0], factor_range[1])
     augmented = cv2.convertScaleAbs(img, alpha=factor, beta=0)
     return np.clip(augmented, 0, 255).astype(np.uint8)
 
 def augment_horizontal_flip(img):
-    """Flip image horizontally."""
+    """Flip image horizontally"""
     return cv2.flip(img, 1)
 
-def process_images(input_dir, output_dir, labels_dir, target_size, augment=False):
-    """
-    Process images and copy corresponding labels.
-    """
-    os.makedirs(output_dir, exist_ok=True)
+def get_class_mapping(dataset_dir, split):
+    """Create class name to ID mapping from directory structure"""
+    split_dir = os.path.join(dataset_dir, split)
+    if not os.path.exists(split_dir):
+        return {}
     
-    # Create labels directory in processed folder
-    output_labels_dir = os.path.join(os.path.dirname(output_dir), 'labels')
+    class_dirs = [d for d in os.listdir(split_dir) 
+                  if os.path.isdir(os.path.join(split_dir, d))]
+    class_dirs.sort()
     
-    image_files = [f for f in os.listdir(input_dir) if f.lower().endswith(('.png', '.jpg', '.jpeg'))]
+    return {class_name: idx for idx, class_name in enumerate(class_dirs)}
+
+def process_animal_class(class_dir, labels_dir, output_images_dir, output_yolo_labels_dir, 
+                        output_original_labels_dir, class_mapping, target_size, augment=False):
+    """Process all images in a single animal class directory"""
     
-    print(f"Starting image processing from '{input_dir}'...")
+    image_files = [f for f in os.listdir(class_dir) 
+                   if f.lower().endswith(('.png', '.jpg', '.jpeg'))]
+    
     image_count = 0
     augmented_count = 0
-    labels_copied = 0
+    yolo_labels_processed = 0
+    original_labels_processed = 0
     
-    for filename in tqdm(image_files, desc="Processing images"):
-        image_path = os.path.join(input_dir, filename)
+    for filename in tqdm(image_files, desc=f"Processing {os.path.basename(class_dir)}"):
+        image_path = os.path.join(class_dir, filename)
+        label_filename = os.path.splitext(filename)[0] + '.txt'
+        label_path = os.path.join(labels_dir, label_filename) if labels_dir else None
         
         img = cv2.imread(image_path)
         if img is None:
-            print(f"Warning: Could not read image {filename}. Skipping.")
             continue
 
-        # --- Preprocessing Steps ---
-        h, w, _ = img.shape
+        original_h, original_w, _ = img.shape
         
-        # Calculate scaling factor
-        scale = min(target_size[0] / w, target_size[1] / h)
-        new_w, new_h = int(w * scale), int(h * scale)
+        # Preprocessing
+        scale = min(target_size[0] / original_w, target_size[1] / original_h)
+        new_w, new_h = int(original_w * scale), int(original_h * scale)
         
-        # Resize
         resized_img = cv2.resize(img, (new_w, new_h), interpolation=cv2.INTER_LINEAR)
         
-        # Calculate padding
         pad_w = target_size[0] - new_w
         pad_h = target_size[1] - new_h
         top, bottom = pad_h // 2, pad_h - (pad_h // 2)
         left, right = pad_w // 2, pad_w - (pad_w // 2)
         
-        # Apply padding
         padded_img = cv2.copyMakeBorder(
             resized_img, top, bottom, left, right, 
             cv2.BORDER_CONSTANT, value=[0, 0, 0]
         )
         
-        # Normalize
         normalized_img = padded_img.astype(np.float32) / 255.0
-        save_original = (normalized_img * 255).astype(np.uint8)
+        save_img = (normalized_img * 255).astype(np.uint8)
         
-        # Save original with same filename (no prefix)
-        cv2.imwrite(os.path.join(output_dir, filename), save_original)
+        cv2.imwrite(os.path.join(output_images_dir, filename), save_img)
         
-        # Copy original label file (extract bounding box only)
-        if copy_label_file(labels_dir, output_labels_dir, filename, filename, flip_horizontal=False):
-            labels_copied += 1
-
-        # --- Data Augmentation (Training Only) ---
-        if augment and random.random() < AUGMENT_PROBABILITY:
-            base_name = os.path.splitext(filename)[0]
-            ext = os.path.splitext(filename)[1]
+        # Process labels
+        if label_path and os.path.exists(label_path):
+            yolo_labels, original_labels = process_label_file(
+                label_path, original_w, original_h, class_mapping, flip_horizontal=False
+            )
             
-            # Brightness augmentation
-            if random.random() < 0.5:  # 50% chance for brightness
-                augmented_img = augment_brightness(save_original)
-                aug_filename = f"aug_brightness_{base_name}{ext}"
-                cv2.imwrite(os.path.join(output_dir, aug_filename), augmented_img)
-                
-                # Copy label file for brightness augmentation (no coordinate changes)
-                if copy_label_file(labels_dir, output_labels_dir, filename, aug_filename, flip_horizontal=False):
-                    labels_copied += 1
-                
-                augmented_count += 1
+            base_filename = os.path.splitext(filename)[0]
             
-            # Horizontal flip augmentation
-            else:  # 50% chance for horizontal flip
-                flipped_img = augment_horizontal_flip(save_original)
-                flip_filename = f"aug_flip_{base_name}{ext}"
-                cv2.imwrite(os.path.join(output_dir, flip_filename), flipped_img)
-                
-                # Copy and modify label file for horizontal flip
-                if copy_label_file(labels_dir, output_labels_dir, filename, flip_filename, flip_horizontal=True):
-                    labels_copied += 1
-                
-                augmented_count += 1
+            if yolo_labels:
+                yolo_label_path = os.path.join(output_yolo_labels_dir, base_filename + '.txt')
+                with open(yolo_label_path, 'w') as f:
+                    f.write('\n'.join(yolo_labels) + '\n')
+                yolo_labels_processed += 1
+            
+            if original_labels:
+                original_label_path = os.path.join(output_original_labels_dir, base_filename + '.txt')
+                with open(original_label_path, 'w') as f:
+                    f.write('\n'.join(original_labels) + '\n')
+                original_labels_processed += 1
 
         image_count += 1
 
-    total_saved = image_count + augmented_count
-    print(f"Finished processing. Processed {image_count} images, saved {total_saved} total ({augmented_count} augmented) to '{output_dir}'.")
-    print(f"Copied {labels_copied} label files to '{output_labels_dir}'.")
+        # Data Augmentation
+        if augment and random.random() < AUGMENT_PROBABILITY and label_path and os.path.exists(label_path):
+            base_name = os.path.splitext(filename)[0]
+            ext = os.path.splitext(filename)[1]
+            
+            if random.random() < 0.5:
+                # Brightness augmentation
+                augmented_img = augment_brightness(save_img)
+                aug_filename = f"aug_brightness_{base_name}{ext}"
+                cv2.imwrite(os.path.join(output_images_dir, aug_filename), augmented_img)
+                
+                if yolo_labels and original_labels:
+                    aug_base = f"aug_brightness_{base_name}"
+                    
+                    aug_yolo_path = os.path.join(output_yolo_labels_dir, aug_base + '.txt')
+                    with open(aug_yolo_path, 'w') as f:
+                        f.write('\n'.join(yolo_labels) + '\n')
+                    yolo_labels_processed += 1
+                    
+                    aug_original_path = os.path.join(output_original_labels_dir, aug_base + '.txt')
+                    with open(aug_original_path, 'w') as f:
+                        f.write('\n'.join(original_labels) + '\n')
+                    original_labels_processed += 1
+                
+                augmented_count += 1
+            else:
+                # Horizontal flip augmentation
+                flipped_img = augment_horizontal_flip(save_img)
+                flip_filename = f"aug_flip_{base_name}{ext}"
+                cv2.imwrite(os.path.join(output_images_dir, flip_filename), flipped_img)
+                
+                flipped_yolo_labels, flipped_original_labels = process_label_file(
+                    label_path, original_w, original_h, class_mapping, flip_horizontal=True
+                )
+                
+                flip_base = f"aug_flip_{base_name}"
+                
+                if flipped_yolo_labels:
+                    flip_yolo_path = os.path.join(output_yolo_labels_dir, flip_base + '.txt')
+                    with open(flip_yolo_path, 'w') as f:
+                        f.write('\n'.join(flipped_yolo_labels) + '\n')
+                    yolo_labels_processed += 1
+                
+                if flipped_original_labels:
+                    flip_original_path = os.path.join(output_original_labels_dir, flip_base + '.txt')
+                    with open(flip_original_path, 'w') as f:
+                        f.write('\n'.join(flipped_original_labels) + '\n')
+                    original_labels_processed += 1
+                
+                augmented_count += 1
+
+    return image_count, augmented_count, yolo_labels_processed, original_labels_processed
+
+def process_split(dataset_dir, split, processed_dir, target_size):
+    """Process entire split (train/test)"""
+    split_dir = os.path.join(dataset_dir, split)
+    
+    if not os.path.exists(split_dir):
+        print(f"Split directory not found: {split_dir}")
+        return
+    
+    class_mapping = get_class_mapping(dataset_dir, split)
+    if not class_mapping:
+        print(f"No classes found in {split_dir}")
+        return
+    
+    print(f"Found {len(class_mapping)} classes")
+    
+    # Create output directories
+    output_images_dir = os.path.join(processed_dir, split, 'images')
+    output_yolo_labels_dir = os.path.join(processed_dir, split, 'labels_yolo')
+    output_original_labels_dir = os.path.join(processed_dir, split, 'labels_original')
+    
+    os.makedirs(output_images_dir, exist_ok=True)
+    os.makedirs(output_yolo_labels_dir, exist_ok=True)
+    os.makedirs(output_original_labels_dir, exist_ok=True)
+    
+    # Save class mapping
+    with open(os.path.join(processed_dir, split, 'classes.txt'), 'w') as f:
+        for class_name, class_id in sorted(class_mapping.items(), key=lambda x: x[1]):
+            f.write(f"{class_id}: {class_name}\n")
+    
+    # Save YOLO dataset configuration
+    with open(os.path.join(processed_dir, split, 'yolo_config.yaml'), 'w') as f:
+        f.write(f"# YOLO dataset configuration for {split}\n")
+        f.write(f"path: {os.path.abspath(processed_dir)}\n")
+        f.write(f"train: {split}/images\n")
+        f.write(f"val: {split}/images\n")
+        f.write(f"nc: {len(class_mapping)}\n")
+        f.write(f"names: {list(class_mapping.keys())}\n")
+    
+    total_images = 0
+    total_augmented = 0
+    total_yolo_labels = 0
+    total_original_labels = 0
+    
+    # Process each animal class
+    for class_name in class_mapping.keys():
+        class_dir = os.path.join(split_dir, class_name)
+        labels_dir = os.path.join(class_dir, 'Label') if os.path.exists(os.path.join(class_dir, 'Label')) else None
+        
+        if not os.path.exists(class_dir):
+            continue
+        
+        image_files = [f for f in os.listdir(class_dir) 
+                       if f.lower().endswith(('.png', '.jpg', '.jpeg'))]
+        
+        if not image_files:
+            continue
+        
+        augment = (split == 'train')
+        img_count, aug_count, yolo_count, original_count = process_animal_class(
+            class_dir, labels_dir, output_images_dir, output_yolo_labels_dir, 
+            output_original_labels_dir, class_mapping, target_size, augment=augment
+        )
+        
+        total_images += img_count
+        total_augmented += aug_count
+        total_yolo_labels += yolo_count
+        total_original_labels += original_count
+    
+    total_saved = total_images + total_augmented
+    print(f"Finished {split}: {total_saved} images, {total_yolo_labels} YOLO labels, {total_original_labels} original labels")
 
 if __name__ == "__main__":
-    if not os.path.exists(DOWNLOAD_DIR):
-        print(f"Error: '{DOWNLOAD_DIR}' directory not found.")
+    if not os.path.exists(DATASET_DIR):
+        print(f"Error: Dataset directory '{DATASET_DIR}' not found.")
         exit(1)
     
-    # Define splits with labels
-    splits = {
-        'train': {
-            'images': os.path.join(DOWNLOAD_DIR, 'train', 'images'),
-            'labels': os.path.join(DOWNLOAD_DIR, 'train', 'labels')
-        },
-        'val': {
-            'images': os.path.join(DOWNLOAD_DIR, 'val', 'images'),
-            'labels': os.path.join(DOWNLOAD_DIR, 'val', 'labels')
-        },
-        'test': {
-            'images': os.path.join(DOWNLOAD_DIR, 'test'),
-            'labels': None  # Test usually has no labels
-        }
-    }
+    for split in ['train', 'test']:
+        split_path = os.path.join(DATASET_DIR, split)
+        
+        if os.path.exists(split_path):
+            print(f"\nProcessing {split.upper()} split")
+            process_split(DATASET_DIR, split, PROCESSED_DIR, TARGET_SIZE)
+        else:
+            print(f"Skipping {split} - directory not found")
     
-    for split, paths in splits.items():
-        images_dir = paths['images']
-        labels_dir = paths['labels']
-        output_split_dir = os.path.join(PROCESSED_DIR, split, 'images')
-        
-        if not os.path.exists(images_dir):
-            print(f"Skipping '{split}' - directory not found at {images_dir}")
-            continue
-        
-        image_count = len([f for f in os.listdir(images_dir) if f.lower().endswith(('.png', '.jpg', '.jpeg'))])
-        
-        if image_count == 0:
-            print(f"Skipping '{split}' - no images found")
-            continue
-        
-        if os.path.exists(output_split_dir) and os.listdir(output_split_dir):
-            print(f"Skipping '{split}' - already processed images found in {output_split_dir}")
-            continue
-        
-        print(f"\n{'='*60}")
-        print(f"Processing {split.upper()} split")
-        print(f"{'='*60}")
-        print(f"Found {image_count} images in {images_dir}")
-        
-        # Only augment training images
-        augment = (split == 'train')
-        process_images(images_dir, output_split_dir, labels_dir, TARGET_SIZE, augment=augment)
+    print(f"\nProcessing complete! Check '{PROCESSED_DIR}' for results.")

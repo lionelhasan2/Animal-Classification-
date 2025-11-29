@@ -3,3 +3,5 @@ animal_data/
 
 # Ignore processed images
 processed_images/
+
+/venv

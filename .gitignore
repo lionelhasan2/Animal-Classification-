@@ -3,7 +3,8 @@ animal_data/
 
 # Ignore processed images
 processed_images/
-\processed_images
 
-# Ignore virtual environment
-\venv
+
+/venv
+/yolo_model
+*.pt

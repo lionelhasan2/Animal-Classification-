@@ -72,3 +72,14 @@ processed_images/
     ├── classes.txt          # Class mapping
     └── yolo_config.yaml     # YOLO configuration
 ```
+
+## Pre-Run Checklist for Yolo model:
+
+1. Rename label folders
+- Yolo is hardcoded to look for folder specifically named 'labels' and 'images'
+- Go to processed_images/train/ and rename labels_yolo to labels
+- Go to processed_images/test/ and rename labels_yolo to labels
+
+2. Update yolo_configuration.yaml file to validate with a different image dataset
+- Go to processed_images/train/yolo_config.yaml
+- replace, val: train/images, with, val: test/images

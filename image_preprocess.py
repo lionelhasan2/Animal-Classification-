@@ -11,14 +11,17 @@ TARGET_SIZE = (416, 416)
 AUGMENT_PROBABILITY = 0.1
 
 def parse_label_line(label_line):
-    """Parse label line format: 'Bear 212.41856 134.383104 741.982208 627.37536'"""
+    """Parse label line format: 'Brown Bear 212.41856 134.383104 741.982208 627.37536'""" 
     parts = label_line.strip().split()
     if len(parts) >= 5:
-        class_name = parts[0]
-        x_center = float(parts[1])
-        y_center = float(parts[2]) 
-        width = float(parts[3])
-        height = float(parts[4])
+        # The last 4 parts are always coordinates: x_center, y_center, width, height
+        # The rest is the class name (can be multi-word)
+        class_name_parts = parts[:-4]
+        class_name = ' '.join(class_name_parts)
+        x_center = float(parts[-4])
+        y_center = float(parts[-3]) 
+        width = float(parts[-2])
+        height = float(parts[-1])
         return class_name, x_center, y_center, width, height
     return None
 
@@ -52,11 +55,12 @@ def flip_bounding_box_horizontal_original(bbox_line, img_width):
     """Flip original format bounding box horizontally"""
     parts = bbox_line.strip().split()
     if len(parts) >= 5:
-        class_name = parts[0]
-        x_center = float(parts[1])
-        y_center = parts[2]
-        width = parts[3]
-        height = parts[4]
+        class_name_parts = parts[:-4]
+        class_name = ' '.join(class_name_parts)
+        x_center = float(parts[-4])
+        y_center = parts[-3]
+        width = parts[-2]
+        height = parts[-1]
         flipped_x = img_width - x_center
         return f"{class_name} {flipped_x} {y_center} {width} {height}"
     return bbox_line

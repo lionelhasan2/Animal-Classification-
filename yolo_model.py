@@ -1,88 +1,129 @@
 import os
 from ultralytics import YOLO
 import torch
+from sklearn.metrics import (
+    accuracy_score,
+    precision_score,
+    recall_score,
+    f1_score,
+    confusion_matrix,
+    ConfusionMatrixDisplay
+)
+import matplotlib.pyplot as plt
+from tqdm import tqdm
 
 '''
 ## Pre-Run Checklist for Yolo model:
-
-1. Rename label folders
-    - Yolo is hardcoded to look for folder specifically named 'labels' and 'images'
-    - Go to processed_images/train/ and rename labels_yolo to labels
-    - Go to processed_images/test/ and rename labels_yolo to labels
-
-2. Update yolo_configuration.yaml file to validate with a different image dataset
-    - Go to processed_images/train/yolo_config.yaml
-    - replace, val: train/images, with, val: test/images
+1. Run the image_organization.py to generate the proper dataset needed for yolo
+Folder Structure:
+    classification_data
+        -> test
+            -> class1
+            -> class2
+            -> ...
+        -> train
+            -> class1
+            -> class2
+            -> ...
 '''
 
-#Global vars
-ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
-TRAIN_CONFIG_PATH = os.path.join(ROOT_DIR, "processed_images", "train", "yolo_config.yaml")
-
-PROJECT_NAME = 'yolo_model'
-RUN_NAME = 'yolo_v11_run'
-MODEL_NAME = 'yolo11n.pt'
-
-EPOCHS = 3
-IMG_SIZE = 640
-BATCH_SIZE = 8
-
-def main():
-    print("\n--- Init ---")
-    model = YOLO(MODEL_NAME) 
+def init(model_name):
+    '''Create Yolo model & determine device to use'''
+    model = YOLO(model_name) 
     if torch.cuda.is_available(): # gpu
-        DEVICE = 'cuda'
+        device = 'cuda'
     elif torch.backends.mps.is_available(): # mac
-        DEVICE = 'mps'
+        device = 'mps'
     else:
-        DEVICE = torch.device("cpu")
-    print(f"Using {MODEL_NAME} and {DEVICE}.")
-    
-    print("\n--- Starting Training ---")
+        device = torch.device("cpu")
+    return model, device
+
+def train(model, device, dataset_path, epoch_size, img_size, batch_size):
+    ''' Start training process '''
     results = model.train(
-        data=TRAIN_CONFIG_PATH,
-        epochs=EPOCHS,
-        imgsz=IMG_SIZE,
-        batch=BATCH_SIZE,
-        name=RUN_NAME,
-        project=PROJECT_NAME, # Name of the folder where results are saved
+        data=dataset_path,
+        epochs=epoch_size,
+        imgsz=img_size,
+        batch=batch_size,
+        name='yolo_v11_run',
+        project='yolo_model', # Name of the folder where results are saved
         patience=50, # Early stopping if no improvement
         exist_ok=True, # Overwrite existing run folder
-        save=True,
-        device=DEVICE,
+        save=False, # Don't keep the weights
+        device=device,
         verbose=False, # 
         plots=True, # automatically saves confusion matrix, PR curves, and F1 curves
         seed = 42 # Start randomness in the exact same way every time we train model
     ) 
 
-    print("\n--- Starting Evaluation ---")
-    metrics = model.val(data=TRAIN_CONFIG_PATH, 
-                        plots=True, 
-                        device=DEVICE, 
-                        verbose=False)
-    
-    # Extract Metrics
-    precision = metrics.box.mp   # mean precision
-    recall = metrics.box.mr      # mean recall
-    map50 = metrics.box.map50    # mAP @ IoU 0.5
-    map_overall = metrics.box.map # mAP @ IoU 0.5:0.95
-    
-    # F1 = 2 * (Precision * Recall) / (Precision + Recall)
-    # Add a small epsilon (1e-7) to avoid division by zero
-    f1_score = 2 * (precision * recall) / (precision + recall + 1e-7)
+def evaluate(model, device, dataset_path):
+    ''' Start evaluating process '''
 
-    print("\n--- YOLO MODEL RESULTS --- ")
-    print(f"Precision:         {precision:.4f}")
-    print(f"Recall:            {recall:.4f}")
-    print(f"F1 Score:          {f1_score:.4f}")
-    print(f"mAP@0.50:          {map50:.4f} (Accuracy Proxy)")
-    print(f"mAP@0.50:0.95:     {map_overall:.4f}")
-    
-    save_dir = results.save_dir
-    cm_path = os.path.join(save_dir, 'confusion_matrix.png')
+    y_true = []
+    y_pred = []
+    image_paths = []
 
-    print(f"Confusion Matrix saved to: {cm_path}")
-    print(f"Full results saved to:     {save_dir}")
+    class_names = sorted(os.listdir(dataset_path))
+    class_to_idx = {cls: i for i, cls in enumerate(class_names)} # map class names to idx
+
+    for class_name in class_names: # map the images in the folder to the folder name (class id)
+        class_path = os.path.join(dataset_path, class_name)
+        for img_file in os.listdir(class_path):
+            if img_file.lower().endswith(('.png', '.jpg', '.jpeg')):
+                img_path = os.path.join(class_path, img_file)
+                image_paths.append((img_path, class_name))
+
+    for img_path, true_class in tqdm(image_paths, desc="Evaluation"): # make a prediction per image
+        result = model.predict(source=img_path, conf=0.5, verbose=False)[0]
+
+        pred_class_idx = int(result.probs.top1)
+        pred_class_name = model.names[pred_class_idx]
+
+        y_true.append(true_class)
+        y_pred.append(pred_class_name)
+
+    y_true_idx = [class_to_idx[label] for label in y_true]
+    y_pred_idx = [class_to_idx[label] for label in y_pred]
+
+    # ---- METRICS ----
+    # Use average='macro' here for equal weighting per class
+    # Prevents classes with more images from skewing our metrics 
+    accuracy = accuracy_score(y_true_idx, y_pred_idx)
+    precision = precision_score(y_true_idx, y_pred_idx, average='macro', zero_division=0)
+    recall = recall_score(y_true_idx, y_pred_idx, average='macro', zero_division=0)
+    f1 = f1_score(y_true_idx, y_pred_idx, average='macro', zero_division=0)
+
+    print("\n--- Evaluation Metrics ---")
+    print(f"Accuracy:   {accuracy:.4f}")
+    print(f"Precision:  {precision:.4f}")
+    print(f"Recall:     {recall:.4f}")
+    print(f"F1 Score:   {f1:.4f}")
+
+    # Show confusion matrix
+    cm = confusion_matrix(y_true_idx, y_pred_idx)
+    disp = ConfusionMatrixDisplay(confusion_matrix=cm, display_labels=class_names)
+    disp.plot(xticks_rotation='vertical')
+    plt.show()
+
+def main():
+    ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
+    BASE_DIR = os.path.join(ROOT_DIR, "classification_data")
+    TEST_DIR = os.path.join(BASE_DIR, "test")
+
+    EPOCHS = 10
+    IMG_SIZE = 416
+    BATCH_SIZE = 8
+    MODEL_NAME = 'yolo11n-cls.pt'
+
+    print('--- Initialization ---')
+    model, device = init(MODEL_NAME)
+    print(f'Using model {MODEL_NAME} & device {device}')
+
+    print('\n--- Training Model ---')
+    train(model, device, dataset_path=BASE_DIR, epoch_size=EPOCHS, img_size=IMG_SIZE, batch_size=BATCH_SIZE)
+
+    print('\n--- Evaluating Model ---')
+    evaluate(model, device, dataset_path=TEST_DIR)
 
 if __name__ == '__main__':
     main()

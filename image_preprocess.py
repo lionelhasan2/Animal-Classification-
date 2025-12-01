@@ -9,6 +9,7 @@ DATASET_DIR = "animal_data"
 PROCESSED_DIR = "processed_images"
 TARGET_SIZE = (416, 416)
 AUGMENT_PROBABILITY = 0.1
+VAL_SPLIT_RATIO = 0.2  # 20% of training data for validation
 
 def parse_label_line(label_line):
     """Parse label line format: 'Brown Bear 212.41856 134.383104 741.982208 627.37536'""" 
@@ -127,6 +128,39 @@ def get_class_mapping(dataset_dir, split):
     class_dirs.sort()
     
     return {class_name: idx for idx, class_name in enumerate(class_dirs)}
+
+def split_train_validation(train_split_dir, val_split_ratio=0.2):
+    """Split training data into train and validation sets"""
+    print(f"Creating train/validation split with {val_split_ratio*100}% for validation...")
+    
+    # Set random seed for reproducible splits
+    random.seed(42)
+    
+    # Get all training image files with their class directories
+    train_files = []
+    
+    for class_name in os.listdir(train_split_dir):
+        class_dir = os.path.join(train_split_dir, class_name)
+        if not os.path.isdir(class_dir):
+            continue
+            
+        image_files = [f for f in os.listdir(class_dir) 
+                      if f.lower().endswith(('.png', '.jpg', '.jpeg'))]
+        
+        for img_file in image_files:
+            train_files.append((class_name, img_file))
+    
+    # Shuffle and split
+    random.shuffle(train_files)
+    split_idx = int(len(train_files) * (1 - val_split_ratio))
+    
+    train_subset = train_files[:split_idx]
+    val_subset = train_files[split_idx:]
+    
+    print(f"Training subset: {len(train_subset)} images")
+    print(f"Validation subset: {len(val_subset)} images")
+    
+    return train_subset, val_subset
 
 def process_animal_class(class_dir, labels_dir, output_images_dir, output_yolo_labels_dir, 
                         output_original_labels_dir, class_mapping, target_size, augment=False):
@@ -318,18 +352,122 @@ def process_split(dataset_dir, split, processed_dir, target_size):
     total_saved = total_images + total_augmented
     print(f"Finished {split}: {total_saved} images, {total_yolo_labels} YOLO labels, {total_original_labels} original labels")
 
+def process_split_with_file_list(dataset_dir, original_split, target_split, file_list, processed_dir, target_size):
+    """Process a specific list of files from the original split to create a new split"""
+    
+    split_dir = os.path.join(dataset_dir, original_split)
+    processed_split_dir = os.path.join(processed_dir, target_split)
+    
+    output_images_dir = os.path.join(processed_split_dir, 'images')
+    output_yolo_labels_dir = os.path.join(processed_split_dir, 'labels')
+    output_original_labels_dir = os.path.join(processed_split_dir, 'original_labels')
+    
+    # Create directories
+    os.makedirs(output_images_dir, exist_ok=True)
+    os.makedirs(output_yolo_labels_dir, exist_ok=True)
+    os.makedirs(output_original_labels_dir, exist_ok=True)
+    
+    # Get class mapping
+    class_mapping = get_class_mapping(dataset_dir, original_split)
+    
+    total_images = 0
+    total_yolo_labels = 0
+    total_original_labels = 0
+    
+    for class_name, filename in tqdm(file_list, desc=f"Processing {target_split}"):
+        class_dir = os.path.join(split_dir, class_name)
+        labels_dir = os.path.join(class_dir, 'Label') if os.path.exists(os.path.join(class_dir, 'Label')) else None
+        
+        image_path = os.path.join(class_dir, filename)
+        label_filename = os.path.splitext(filename)[0] + '.txt'
+        label_path = os.path.join(labels_dir, label_filename) if labels_dir else None
+        
+        if not os.path.exists(image_path):
+            continue
+            
+        img = cv2.imread(image_path)
+        if img is None:
+            continue
+
+        original_h, original_w, _ = img.shape
+        
+        # Preprocessing (same as before)
+        scale = min(target_size[0] / original_w, target_size[1] / original_h)
+        new_w, new_h = int(original_w * scale), int(original_h * scale)
+        
+        resized_img = cv2.resize(img, (new_w, new_h), interpolation=cv2.INTER_LINEAR)
+        
+        pad_w = target_size[0] - new_w
+        pad_h = target_size[1] - new_h
+        top, bottom = pad_h // 2, pad_h - (pad_h // 2)
+        left, right = pad_w // 2, pad_w - (pad_w // 2)
+        
+        padded_img = cv2.copyMakeBorder(
+            resized_img, top, bottom, left, right, 
+            cv2.BORDER_CONSTANT, value=[0, 0, 0]
+        )
+        
+        normalized_img = padded_img.astype(np.float32) / 255.0
+        save_img = (normalized_img * 255).astype(np.uint8)
+        
+        # Create unique filename to avoid collisions
+        unique_filename = f"{class_name}_{filename}"
+        cv2.imwrite(os.path.join(output_images_dir, unique_filename), save_img)
+        
+        # Process labels
+        if label_path and os.path.exists(label_path):
+            yolo_labels, original_labels = process_label_file(
+                label_path, original_w, original_h, class_mapping, flip_horizontal=False
+            )
+            
+            base_filename = os.path.splitext(unique_filename)[0]
+            
+            if yolo_labels:
+                yolo_label_path = os.path.join(output_yolo_labels_dir, base_filename + '.txt')
+                with open(yolo_label_path, 'w') as f:
+                    f.write('\n'.join(yolo_labels) + '\n')
+                total_yolo_labels += 1
+            
+            if original_labels:
+                original_label_path = os.path.join(output_original_labels_dir, base_filename + '.txt')
+                with open(original_label_path, 'w') as f:
+                    f.write('\n'.join(original_labels) + '\n')
+                total_original_labels += 1
+
+        total_images += 1
+
+    print(f"Finished {target_split}: {total_images} images, {total_yolo_labels} YOLO labels, {total_original_labels} original labels")
+
 if __name__ == "__main__":
     if not os.path.exists(DATASET_DIR):
         print(f"Error: Dataset directory '{DATASET_DIR}' not found.")
         exit(1)
     
-    for split in ['train', 'test']:
-        split_path = os.path.join(DATASET_DIR, split)
+    # Check if train split exists
+    train_path = os.path.join(DATASET_DIR, 'train')
+    if os.path.exists(train_path):
+        print(f"\nProcessing TRAIN split with validation split")
         
-        if os.path.exists(split_path):
-            print(f"\nProcessing {split.upper()} split")
-            process_split(DATASET_DIR, split, PROCESSED_DIR, TARGET_SIZE)
-        else:
-            print(f"Skipping {split} - directory not found")
+        # Create train/validation split
+        train_subset, val_subset = split_train_validation(train_path, VAL_SPLIT_RATIO)
+        
+        # Process train subset
+        print("Processing training subset...")
+        process_split_with_file_list(DATASET_DIR, 'train', 'train', train_subset, PROCESSED_DIR, TARGET_SIZE)
+        
+        # Process validation subset  
+        print("Processing validation subset...")
+        process_split_with_file_list(DATASET_DIR, 'train', 'val', val_subset, PROCESSED_DIR, TARGET_SIZE)
+    else:
+        print("Skipping 'train' - directory not found at animal_data/train")
+    
+    # Process test split normally
+    test_path = os.path.join(DATASET_DIR, 'test')
+    if os.path.exists(test_path):
+        print(f"\nProcessing TEST split")
+        process_split(DATASET_DIR, 'test', PROCESSED_DIR, TARGET_SIZE)
+    else:
+        print("Skipping 'test' - directory not found at animal_data/test")
     
     print(f"\nProcessing complete! Check '{PROCESSED_DIR}' for results.")
+    print("Your processed_images folder now contains: train/, val/, and test/ subdirectories")

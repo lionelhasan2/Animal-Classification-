@@ -204,7 +204,9 @@ def process_animal_class(class_dir, labels_dir, output_images_dir, output_yolo_l
         normalized_img = padded_img.astype(np.float32) / 255.0
         save_img = (normalized_img * 255).astype(np.uint8)
         
-        cv2.imwrite(os.path.join(output_images_dir, filename), save_img)
+        class_name = os.path.basename(class_dir) # Get class name (e.g., 'Brown Bear')
+        unique_filename = f"{class_name}_{filename}"
+        cv2.imwrite(os.path.join(output_images_dir, unique_filename), save_img)
         
         # Process labels
         if label_path and os.path.exists(label_path):
@@ -212,7 +214,7 @@ def process_animal_class(class_dir, labels_dir, output_images_dir, output_yolo_l
                 label_path, original_w, original_h, class_mapping, flip_horizontal=False
             )
             
-            base_filename = os.path.splitext(filename)[0]
+            base_filename = os.path.splitext(unique_filename)[0]
             
             if yolo_labels:
                 yolo_label_path = os.path.join(output_yolo_labels_dir, base_filename + '.txt')

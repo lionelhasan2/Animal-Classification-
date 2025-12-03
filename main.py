@@ -17,14 +17,13 @@ def define_params(model):
     return criterion, optimizer
 
 
-def train(model, device, train_loader, optimizer, criterion):
+def train(model, device, train_loader, optimizer, criterion, history):
     model.train()
     running_loss = 0.0
     correct = 0
     total = 0
-    loop = tqdm(train_loader, desc="Training", leave=False)
 
-    for batch in loop:
+    for batch in tqdm(train_loader, desc="Training", leave=False):
         data, target = batch
         data, target = data.to(device), target.to(device)
         optimizer.zero_grad()
@@ -40,18 +39,20 @@ def train(model, device, train_loader, optimizer, criterion):
 
     avg_loss = running_loss / total
     accuracy = 100.0 * correct / total
+
+    history["train_loss"].append(avg_loss)
+    history["train_acc"].append(accuracy)
     print(f"Avg Training Loss: {avg_loss:.4f}, Accuracy: {accuracy:.2f}%")
 
 
-def evaluate(model, device, dataloader, criterion):
+def evaluate(model, device, dataloader, criterion, history):
     model.eval()
     test_loss = 0
     correct = 0
     total = 0
 
     with torch.no_grad():
-        loop = tqdm(dataloader, desc="Validating", leave=False)
-        for batch in loop:
+        for batch in tqdm(dataloader, desc="Validating", leave=False):
             data, target = batch
             data, target = data.to(device), target.to(device)
             outputs = model(data)
@@ -63,6 +64,9 @@ def evaluate(model, device, dataloader, criterion):
     
     avg_loss = test_loss / total
     accuracy = 100. * correct / total
+
+    history["train_loss"].append(avg_loss)
+    history["train_acc"].append(accuracy)
     print(f"\nAverage loss: {avg_loss:.4f}, Accuracy: {correct}/{total} ({accuracy:.2f}%)\n")
 
 
@@ -91,10 +95,11 @@ def Train_and_Validate_VGG(num_epochs, device, classes, train_loader, val_loader
     criterion, optimizer = define_params(model)
 
     model.to(device)
+    history = {"train_loss": [], "train_acc": [], "val_loss": [], "val_acc": []}
     for epoch in range(num_epochs):
         print(f"Epoch {epoch+1}/{num_epochs}")
-        train(model, device, train_loader, optimizer, criterion)
-        evaluate(model, device, val_loader, criterion)
+        history = train(model, device, train_loader, optimizer, criterion, history)
+        history = evaluate(model, device, val_loader, criterion, history)
 
     # Save model weights
     save_dir = "./VGG"
@@ -114,10 +119,11 @@ def Train_and_Validate_AlexNet(num_epochs, device, classes, train_loader, val_lo
     criterion, optimizer = define_params(model)
 
     model.to(device)
+    history = {"train_loss": [], "train_acc": [], "val_loss": [], "val_acc": []}
     for epoch in range(num_epochs):
         print(f"Epoch {epoch+1}/{num_epochs}")
-        train(model, device, train_loader, optimizer, criterion)
-        evaluate(model, device, val_loader, criterion)
+        history = train(model, device, train_loader, optimizer, criterion, history)
+        history = evaluate(model, device, val_loader, criterion, history)
     
     # Save model weights
     save_dir = "./AlexNet"
@@ -127,6 +133,7 @@ def Train_and_Validate_AlexNet(num_epochs, device, classes, train_loader, val_lo
     print(f"AlexNet Model weights saved to: {save_path}")
 
     display_confusion_matrix(model, device, test_loader, classes)
+    return history
 
 
 def testModel(model_name, classes, device, test_data_path='./animal_data/test'):
@@ -177,6 +184,31 @@ def testModel(model_name, classes, device, test_data_path='./animal_data/test'):
     print(f"Prediction: {predicted_class}")
     print(f"True Label: {true_class}")
 
+def compareModels(VGG_history, AlexNet_history, num_epochs):
+    """Compare training and validation accuracy of VGG and AlexNet models."""
+    epochs = range(1, num_epochs + 1)
+    plt.figure(figsize=(12, 5))
+
+    # Plot training accuracy
+    plt.subplot(1, 2, 1)
+    plt.plot(epochs, VGG_history['train_acc'], label='VGG Train Acc')
+    plt.plot(epochs, AlexNet_history['train_acc'], label='AlexNet Train Acc')
+    plt.title('Training Accuracy Comparison')
+    plt.xlabel('Epochs')
+    plt.ylabel('Accuracy (%)')
+    plt.legend()
+
+    # Plot validation accuracy
+    plt.subplot(1, 2, 2)
+    plt.plot(epochs, VGG_history['val_acc'], label='VGG Val Acc')
+    plt.plot(epochs, AlexNet_history['val_acc'], label='AlexNet Val Acc')
+    plt.title('Validation Accuracy Comparison')
+    plt.xlabel('Epochs')
+    plt.ylabel('Accuracy (%)')
+    plt.legend()
+
+    plt.tight_layout()
+    plt.show()
 
 if __name__ == "__main__":
     # Get data loaders
@@ -187,7 +219,8 @@ if __name__ == "__main__":
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     num_epochs = 5
 
-    Train_and_Validate_VGG(num_epochs, device, classes, train_loader, val_loader, test_loader)
-    Train_and_Validate_AlexNet(num_epochs, device, classes, train_loader, val_loader, test_loader)
-    
+    VGG_history = Train_and_Validate_VGG(num_epochs, device, classes, train_loader, val_loader, test_loader)
+    AlexNet_history = Train_and_Validate_AlexNet(num_epochs, device, classes, train_loader, val_loader, test_loader)
+    compareModels(VGG_history, AlexNet_history, num_epochs)
+
     testModel("VGG", classes, device)

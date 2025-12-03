@@ -48,7 +48,17 @@ class AnimalDataset(Dataset):
         return image, class_id
 
 
-def get_transforms():
+def get_train_transforms():
+    return transforms.Compose([
+        transforms.Resize((224, 224)),
+        transforms.RandomHorizontalFlip(p=0.5),
+        transforms.RandomRotation(15),
+        transforms.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0.02),
+        transforms.ToTensor(),
+        transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+    ])
+
+def get_test_transforms():
     return transforms.Compose([
         transforms.Resize((224, 224)),
         transforms.ToTensor(),
@@ -56,26 +66,23 @@ def get_transforms():
     ])
 
 def dataloaders(batch_size=32):
-    # Define transforms
-    transform = get_transforms()
-    
     # Create datasets using the custom AnimalDataset
     train_dataset = AnimalDataset(
         images_dir='../animal_data/train/images',
         labels_dir='../animal_data/train/labels',
-        transform=transform
+        transform=get_train_transforms()
     )
     
     val_dataset = AnimalDataset(
         images_dir='../animal_data/val/images',
         labels_dir='../animal_data/val/labels',
-        transform=transform
+        transform=get_test_transforms()
     )
     
     test_dataset = AnimalDataset(
         images_dir='../animal_data/test/images',
         labels_dir=None,  # Test set has no labels
-        transform=transform
+        transform=get_test_transforms()
     )
 
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=2)

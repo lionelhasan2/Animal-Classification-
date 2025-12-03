@@ -4,7 +4,7 @@ import os
 from tqdm import tqdm
 import torch.nn as nn
 import torch
-from dataset import dataloaders, get_transforms
+from dataset import dataloaders, get_test_transforms
 from VGG.VGG import VGG
 from AlexNet.AlexNet import AlexNet
 import random
@@ -154,7 +154,7 @@ def testModel(model_name, classes, device, test_data_path='./animal_data/test'):
     print(f"\nTesting image: {img_path}")
 
     # Define preprocessing
-    transform = get_transforms()
+    transform = get_test_transforms()
 
     # Load and preprocess image
     img = Image.open(img_path).convert("RGB")

@@ -34,7 +34,7 @@ class AlexNet(nn.Module):
         # Fully connected layers
         self.fc = nn.Sequential(
             nn.Dropout(0.5),
-            nn.Linear(9216, 4096),
+            nn.Linear(6400, 4096),
             nn.ReLU())
         self.fc1 = nn.Sequential(
             nn.Dropout(0.5),

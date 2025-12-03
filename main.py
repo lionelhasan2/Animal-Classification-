@@ -43,6 +43,7 @@ def train(model, device, train_loader, optimizer, criterion, history):
     history["train_loss"].append(avg_loss)
     history["train_acc"].append(accuracy)
     print(f"Avg Training Loss: {avg_loss:.4f}, Accuracy: {accuracy:.2f}%")
+    return history
 
 
 def evaluate(model, device, dataloader, criterion, history):
@@ -65,9 +66,10 @@ def evaluate(model, device, dataloader, criterion, history):
     avg_loss = test_loss / total
     accuracy = 100. * correct / total
 
-    history["train_loss"].append(avg_loss)
-    history["train_acc"].append(accuracy)
+    history["val_loss"].append(avg_loss)
+    history["val_acc"].append(accuracy)
     print(f"\nAverage loss: {avg_loss:.4f}, Accuracy: {correct}/{total} ({accuracy:.2f}%)\n")
+    return history
 
 
 def display_confusion_matrix(model, device, test_loader, classes):
@@ -91,7 +93,6 @@ def Train_and_Validate_VGG(num_epochs, device, classes, train_loader, val_loader
     """Train and Validate VGG model."""
     print("Validating VGG model...")
     model = VGG(num_classes=len(classes))
-    print(model)
     criterion, optimizer = define_params(model)
 
     model.to(device)
@@ -109,13 +110,13 @@ def Train_and_Validate_VGG(num_epochs, device, classes, train_loader, val_loader
     print(f"VGG Model weights saved to: {save_path}")
 
     display_confusion_matrix(model, device, test_loader, classes)
+    return history
 
 
 def Train_and_Validate_AlexNet(num_epochs, device, classes, train_loader, val_loader, test_loader):
     """Train and Validate AlexNet model."""
     print("Validating AlexNet model...")
     model = AlexNet(num_classes=len(classes))
-    print(model)
     criterion, optimizer = define_params(model)
 
     model.to(device)
@@ -219,8 +220,8 @@ if __name__ == "__main__":
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     num_epochs = 5
 
-    VGG_history = Train_and_Validate_VGG(num_epochs, device, classes, train_loader, val_loader, test_loader)
+    # VGG_history = Train_and_Validate_VGG(num_epochs, device, classes, train_loader, val_loader, test_loader)
     AlexNet_history = Train_and_Validate_AlexNet(num_epochs, device, classes, train_loader, val_loader, test_loader)
-    compareModels(VGG_history, AlexNet_history, num_epochs)
+    # compareModels(VGG_history, AlexNet_history, num_epochs)
 
-    testModel("VGG", classes, device)
+    testModel("AlexNet", classes, device)

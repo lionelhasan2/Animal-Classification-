@@ -4,61 +4,63 @@ import torchvision.transforms as transforms
 from torch.utils.data import DataLoader, Dataset
 
 class AnimalDataset(Dataset):
-    """Custom Dataset for loading animal images and labels."""
-    def __init__(self, images_dir, labels_dir=None, transform=None):
-        self.images_dir = images_dir
-        self.labels_dir = labels_dir
+    """Custom Dataset for loading animal images organized by class folders."""
+    def __init__(self, root_dir, transform=None):
+        self.root_dir = root_dir
         self.transform = transform
-        self.has_labels = labels_dir is not None and os.path.exists(labels_dir)
         
-        # Get all image files
-        self.image_files = [f for f in os.listdir(images_dir) if f.lower().endswith(('.jpg', '.jpeg', '.png'))]
+        # Get all class folders and create class mappings
+        self.classes = sorted([d for d in os.listdir(root_dir) if os.path.isdir(os.path.join(root_dir, d))])
+        self.class_to_idx = {cls_name: idx for idx, cls_name in enumerate(self.classes)}
+        self.idx_to_class = {idx: cls_name for cls_name, idx in self.class_to_idx.items()}
+        self.num_classes = len(self.classes)
+        
+        # Get all image paths and their corresponding labels
+        self.image_paths = []
+        self.labels = []
+        
+        for class_name in self.classes:
+            class_dir = os.path.join(root_dir, class_name)
+            class_idx = self.class_to_idx[class_name]
+            
+            for img_file in os.listdir(class_dir):
+                if img_file.lower().endswith(('.jpg', '.jpeg', '.png')):
+                    img_path = os.path.join(class_dir, img_file)
+                    self.image_paths.append(img_path)
+                    self.labels.append(class_idx)
         
     def __len__(self):
-        return len(self.image_files)
+        return len(self.image_paths)
     
     def __getitem__(self, idx):
-        # Get image filename
-        img_name = self.image_files[idx]
-        img_path = os.path.join(self.images_dir, img_name)
+        # Get image path and label
+        img_path = self.image_paths[idx]
+        label = self.labels[idx]
         
         # Load image
         image = Image.open(img_path).convert('RGB')
-        
-        # Get label if available
-        if self.has_labels:
-            label_name = os.path.splitext(img_name)[0] + '.txt'
-            label_path = os.path.join(self.labels_dir, label_name)
-            
-            try:
-                with open(label_path, 'r') as f:
-                    line = f.readline().strip()
-                    if line:
-                        class_id = int(line.split()[0])
-                    else:
-                        class_id = 0
-            except FileNotFoundError:
-                class_id = 0  # default class if no label file
-        else:
-            class_id = -1  # indicate no label available
-        
+    
         if self.transform:
             image = self.transform(image)
             
-        return image, class_id
+        return image, label
 
 
 def get_train_transforms():
+    """Training transforms with data augmentation."""
     return transforms.Compose([
-        transforms.Resize((224, 224)),
+        transforms.Resize((256, 256)),
+        transforms.RandomCrop((224, 224)),
         transforms.RandomHorizontalFlip(p=0.5),
-        transforms.RandomRotation(15),
-        transforms.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0.02),
+        transforms.RandomRotation(degrees=15),
+        transforms.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0.1),
+        transforms.RandomGrayscale(p=0.1),
         transforms.ToTensor(),
         transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
     ])
 
 def get_test_transforms():
+    """Test/validation transforms without augmentation."""
     return transforms.Compose([
         transforms.Resize((224, 224)),
         transforms.ToTensor(),
@@ -66,24 +68,12 @@ def get_test_transforms():
     ])
 
 def dataloaders(batch_size=32):
-    # Create datasets using the custom AnimalDataset
-    train_dataset = AnimalDataset(
-        images_dir='../animal_data/train/images',
-        labels_dir='../animal_data/train/labels',
-        transform=get_train_transforms()
-    )
+    """Create dataloaders for animal classification using ImageFolder structure."""
+    dataset_dir = './animal_data'
     
-    val_dataset = AnimalDataset(
-        images_dir='../animal_data/val/images',
-        labels_dir='../animal_data/val/labels',
-        transform=get_test_transforms()
-    )
-    
-    test_dataset = AnimalDataset(
-        images_dir='../animal_data/test/images',
-        labels_dir=None,  # Test set has no labels
-        transform=get_test_transforms()
-    )
+    train_dataset = AnimalDataset(root_dir=dataset_dir + '/train', transform=get_train_transforms())
+    val_dataset = AnimalDataset(root_dir=dataset_dir + '/val', transform=get_test_transforms())
+    test_dataset = AnimalDataset(root_dir= dataset_dir + '/test', transform=get_test_transforms())
 
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=2)
     val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, num_workers=2)

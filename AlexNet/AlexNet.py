@@ -1,7 +1,7 @@
 import torch.nn as nn
 
 class AlexNet(nn.Module):
-    def __init__(self, num_classes=1000):
+    def __init__(self, num_classes=80):
         super(AlexNet, self).__init__()
 
         # ---- Feature Extractor ----

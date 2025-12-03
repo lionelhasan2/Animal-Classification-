@@ -1,11 +1,15 @@
 from sklearn.metrics import confusion_matrix, ConfusionMatrixDisplay
 import matplotlib.pyplot as plt
+import os
 from tqdm import tqdm
 import torch.nn as nn
 import torch
-from dataset import dataloaders
+from dataset import dataloaders, get_transforms
 from VGG.VGG import VGG
 from AlexNet.AlexNet import AlexNet
+import random
+from PIL import Image
+import random
 
 def define_params(model):
     criterion = nn.CrossEntropyLoss()
@@ -79,7 +83,8 @@ def display_confusion_matrix(model, device, test_loader, classes):
     plt.show()
 
 
-def validate_VGG(num_epochs, device, classes, train_loader, val_loader, test_loader):
+def Train_and_Validate_VGG(num_epochs, device, classes, train_loader, val_loader, test_loader):
+    """Train and Validate VGG model."""
     print("Validating VGG model...")
     model = VGG(num_classes=len(classes))
     print(model)
@@ -90,11 +95,19 @@ def validate_VGG(num_epochs, device, classes, train_loader, val_loader, test_loa
         print(f"Epoch {epoch+1}/{num_epochs}")
         train(model, device, train_loader, optimizer, criterion)
         evaluate(model, device, val_loader, criterion)
-    
+
+    # Save model weights
+    save_dir = "./VGG"
+    os.makedirs(save_dir, exist_ok=True)
+    save_path = os.path.join(save_dir, "VGG_weights.pth")
+    torch.save(model.state_dict(), save_path)
+    print(f"VGG Model weights saved to: {save_path}")
+
     display_confusion_matrix(model, device, test_loader, classes)
 
 
-def validate_AlexNet(num_epochs, device, classes, train_loader, val_loader, test_loader):
+def Train_and_Validate_AlexNet(num_epochs, device, classes, train_loader, val_loader, test_loader):
+    """Train and Validate AlexNet model."""
     print("Validating AlexNet model...")
     model = AlexNet(num_classes=len(classes))
     print(model)
@@ -106,15 +119,75 @@ def validate_AlexNet(num_epochs, device, classes, train_loader, val_loader, test
         train(model, device, train_loader, optimizer, criterion)
         evaluate(model, device, val_loader, criterion)
     
+    # Save model weights
+    save_dir = "./AlexNet"
+    os.makedirs(save_dir, exist_ok=True)
+    save_path = os.path.join(save_dir, "alexnet_weights.pth")
+    torch.save(model.state_dict(), save_path)
+    print(f"AlexNet Model weights saved to: {save_path}")
+
     display_confusion_matrix(model, device, test_loader, classes)
 
 
+def testModel(model_name, classes, device, test_data_path='./animal_data/test'):
+    """Test a trained model on a random image from the test folder."""
+    # --- Load the trained model ---
+    if model_name == "VGG":
+        model = VGG(num_classes=len(classes))
+        model.load_state_dict(torch.load('./VGG/VGG_weights.pth', map_location=device))
+    elif model_name == "AlexNet":
+        model = AlexNet(num_classes=len(classes))
+        model.load_state_dict(torch.load('./AlexNet/alexnet_weights.pth', map_location=device))
+    else:
+        raise ValueError("Model must be 'VGG' or 'AlexNet'")
+
+    model.to(device)
+    model.eval()
+
+    # Pick a random class folder
+    class_dir = random.choice(os.listdir(test_data_path))
+    class_path = os.path.join(test_data_path, class_dir)
+
+    # Pick a random image inside that folder
+    img_name = random.choice(os.listdir(class_path))
+    img_path = os.path.join(class_path, img_name)
+    print(f"\nTesting image: {img_path}")
+
+    # Define preprocessing
+    transform = get_transforms()
+
+    # Load and preprocess image
+    img = Image.open(img_path).convert("RGB")
+    img_transformed = transform(img).unsqueeze(0).to(device)   # add batch dimension
+
+    # Run model
+    with torch.no_grad():
+        outputs = model(img_transformed)
+        _, predicted = torch.max(outputs, 1)
+    
+    predicted_class = classes[predicted.item()]
+    true_class = class_dir
+
+    # Show result
+    plt.imshow(img)
+    plt.title(f"Predicted: {predicted_class} | True: {true_class}")
+    plt.axis("off")
+    plt.show()
+
+    print(f"Prediction: {predicted_class}")
+    print(f"True Label: {true_class}")
+
+
 if __name__ == "__main__":
+    # Get data loaders
     classes, train_loader, val_loader, test_loader = dataloaders(batch_size=32)
     print(f"Found {len(classes)} classes")
 
+    # Set device and number of epochs
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     num_epochs = 5
 
-    validate_VGG(num_epochs, device, classes, train_loader, val_loader, test_loader)
-    validate_AlexNet(num_epochs, device, classes, train_loader, val_loader, test_loader)
+    Train_and_Validate_VGG(num_epochs, device, classes, train_loader, val_loader, test_loader)
+    Train_and_Validate_AlexNet(num_epochs, device, classes, train_loader, val_loader, test_loader)
+    
+    testModel("VGG", classes, device)

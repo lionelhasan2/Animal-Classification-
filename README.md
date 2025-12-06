@@ -8,8 +8,7 @@
    ```
 
 2. **Dataset:**
-   - Put the dataset `Animals-10/` folder in the same directory as the main.py file
-   - Dataset from: https://www.kaggle.com/datasets/viratkothari/animal10 
+   # The dataset is already included in the .zip file in the correct directory
     
    Expected structure:
    ```
@@ -24,6 +23,14 @@
        ├── butterfly/
        │   └── *.jpg
        └── ... (same classes)
+   ```
+
+   # If you chose to download it from scratch
+   - Download the dataset from kaggle, https://www.kaggle.com/datasets/viratkothari/animal10
+   - Put the dataset `Animals-10/` folder in the same directory as the main.py file
+   - Run the "split_data.py" python script to split the data into test & train folders
+   ```bash
+   python3 split_data.py
    ```
 
 ## Usage

@@ -27,7 +27,7 @@
 
    # If you chose to download it from scratch
    - Download the dataset from kaggle, https://www.kaggle.com/datasets/viratkothari/animal10
-   - Put the dataset `Animals-10/` folder in the same directory as the main.py file
+   - Put the dataset `Animals-10/` folder in the same directory as the main.py file and the split_data file
    - Run the "split_data.py" python script to split the data into test & train folders
    ```bash
    python3 split_data.py

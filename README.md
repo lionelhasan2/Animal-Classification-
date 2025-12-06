@@ -39,6 +39,8 @@
 python3 main.py
 ```
 
+- after training each model, there will be a confusion matrix graph that is generated. You will need to close that confusion matrix plot for the program to continue.
+
 ## Results
 - This script trains and evaluates both the **VGG** and **AlexNet** models using the **Animals-10** dataset.
 - After training, it generates visualizations including:

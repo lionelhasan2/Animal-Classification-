@@ -5,3 +5,5 @@ animal_data/
 processed_images/
 
 /venv
+/dataset
+/Animals-10

@@ -10,14 +10,27 @@ from AlexNet.AlexNet import AlexNet
 import random
 from PIL import Image
 import random
+import pandas as pd
 
-def define_params(model):
+def define_params(model, num_epochs):
+    """Define loss fnc, optimizer, and learning rate scheduler"""
     criterion = nn.CrossEntropyLoss()
-    optimizer = torch.optim.SGD(model.parameters(), lr=0.005, weight_decay=0.005, momentum=0.9)
-    return criterion, optimizer
+    optimizer = torch.optim.SGD(
+        model.parameters(),
+        lr=0.01,          
+        momentum=0.9,
+        weight_decay=1e-4 
+    )
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+        optimizer,
+        T_max=num_epochs, # Max number of iterations
+        eta_min=1e-5 # Minimum learning rate
+    )    
+    return criterion, optimizer, scheduler
 
 
 def train(model, device, train_loader, optimizer, criterion, history):
+    """Single epoch training on desired model"""
     model.train()
     running_loss = 0.0
     correct = 0
@@ -47,6 +60,7 @@ def train(model, device, train_loader, optimizer, criterion, history):
 
 
 def evaluate(model, device, dataloader, criterion, history):
+    """Single epoch evaluation on desired model"""
     model.eval()
     test_loss = 0
     correct = 0
@@ -93,7 +107,7 @@ def Train_and_Validate_VGG(num_epochs, device, classes, train_loader, val_loader
     """Train and Validate VGG model."""
     print("Validating VGG model...")
     model = VGG(num_classes=len(classes))
-    criterion, optimizer = define_params(model)
+    criterion, optimizer, scheduler = define_params(model, num_epochs)
 
     model.to(device)
     history = {"train_loss": [], "train_acc": [], "val_loss": [], "val_acc": []}
@@ -101,6 +115,7 @@ def Train_and_Validate_VGG(num_epochs, device, classes, train_loader, val_loader
         print(f"Epoch {epoch+1}/{num_epochs}")
         history = train(model, device, train_loader, optimizer, criterion, history)
         history = evaluate(model, device, val_loader, criterion, history)
+        scheduler.step()
 
     # Save model weights
     save_dir = "./VGG"
@@ -117,7 +132,7 @@ def Train_and_Validate_AlexNet(num_epochs, device, classes, train_loader, val_lo
     """Train and Validate AlexNet model."""
     print("Validating AlexNet model...")
     model = AlexNet(num_classes=len(classes))
-    criterion, optimizer = define_params(model)
+    criterion, optimizer, scheduler = define_params(model, num_epochs)
 
     model.to(device)
     history = {"train_loss": [], "train_acc": [], "val_loss": [], "val_acc": []}
@@ -125,6 +140,7 @@ def Train_and_Validate_AlexNet(num_epochs, device, classes, train_loader, val_lo
         print(f"Epoch {epoch+1}/{num_epochs}")
         history = train(model, device, train_loader, optimizer, criterion, history)
         history = evaluate(model, device, val_loader, criterion, history)
+        scheduler.step()
     
     # Save model weights
     save_dir = "./AlexNet"
@@ -211,17 +227,84 @@ def compareModels(VGG_history, AlexNet_history, num_epochs):
     plt.tight_layout()
     plt.show()
 
+def compareLoss(VGG_history, AlexNet_history, num_epochs):
+    """Compare training and validation loss of VGG and AlexNet models."""
+    epochs = range(1, num_epochs + 1)
+    plt.figure(figsize=(12, 5))
+
+    # Plot training accuracy
+    plt.subplot(1, 2, 1)
+    plt.plot(epochs, VGG_history['train_loss'], label='VGG Train Loss')
+    plt.plot(epochs, AlexNet_history['train_loss'], label='AlexNet Train Loss')
+    plt.title('Training Loss Comparison')
+    plt.xlabel('Epochs')
+    plt.ylabel('Loss')
+    plt.legend()
+
+    # Plot validation accuracy
+    plt.subplot(1, 2, 2)
+    plt.plot(epochs, VGG_history['val_loss'], label='VGG Val Loss')
+    plt.plot(epochs, AlexNet_history['val_loss'], label='AlexNet Val Loss')
+    plt.title('Validation Loss Comparison')
+    plt.xlabel('Epochs')
+    plt.ylabel('Loss')
+    plt.legend()
+
+    plt.tight_layout()
+    plt.show()
+
+def print_and_save_epoch_comparison(VGG_history, AlexNet_history, num_epochs, filename):
+    """Prints and saves a csv file comparing VGG and AlexNet performance"""
+
+    data = {
+        "Epoch": list(range(1, num_epochs + 1)),
+
+        "VGG Train Acc": VGG_history['train_acc'][:num_epochs],
+        "AlexNet Train Acc": AlexNet_history['train_acc'][:num_epochs],
+
+        "VGG Val Acc": VGG_history['val_acc'][:num_epochs],
+        "AlexNet Val Acc": AlexNet_history['val_acc'][:num_epochs],
+
+        "VGG Train Loss": VGG_history['train_loss'][:num_epochs],
+        "AlexNet Train Loss": AlexNet_history['train_loss'][:num_epochs],
+
+        "VGG Val Loss": VGG_history['val_loss'][:num_epochs],
+        "AlexNet Val Loss": AlexNet_history['val_loss'][:num_epochs],
+    }
+
+    df = pd.DataFrame(data)
+    
+    print("\n === EPOCH COMPARISON ===")
+    print(df.round(4).to_string(index=False))
+    
+    try:
+        df.to_csv(filename, index=False)
+        print(f"✅ CSV saved successfully: {filename}")
+    except Exception as e:
+        print(f"❌ Failed to save CSV: {filename}.")
+        print(f"Error: {e}")
+        
+
 if __name__ == "__main__":
+    num_epochs = 10
+    filename = "vgg_alexnet_comparison_results"
+
     # Get data loaders
-    classes, train_loader, val_loader, test_loader = dataloaders(batch_size=32)
+    classes, train_loader, test_loader = dataloaders(batch_size=64)
     print(f"Found {len(classes)} classes")
 
     # Set device and number of epochs
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    num_epochs = 5
+    print(f"Using device {device}.")
 
-    # VGG_history = Train_and_Validate_VGG(num_epochs, device, classes, train_loader, val_loader, test_loader)
-    AlexNet_history = Train_and_Validate_AlexNet(num_epochs, device, classes, train_loader, val_loader, test_loader)
-    # compareModels(VGG_history, AlexNet_history, num_epochs)
+    # Train and Validate Models
+    VGG_history = Train_and_Validate_VGG(num_epochs, device, classes, train_loader, test_loader, test_loader)
+    AlexNet_history = Train_and_Validate_AlexNet(num_epochs, device, classes, train_loader, test_loader, test_loader)
 
-    testModel("AlexNet", classes, device)
+    # Visualization
+    compareModels(VGG_history, AlexNet_history, num_epochs)
+    compareLoss(VGG_history, AlexNet_history, num_epochs)
+    print_and_save_epoch_comparison(VGG_history, AlexNet_history, num_epochs, filename)
+
+    # Uncomment to test a random image with user desired model, "AlexNet" or "VGG"
+    # testModel("AlexNet", classes, device)

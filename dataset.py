@@ -8,7 +8,7 @@ class AnimalDataset(Dataset):
     def __init__(self, root_dir, transform=None):
         self.root_dir = root_dir
         self.transform = transform
-        
+
         # Get all class folders and create class mappings
         self.classes = sorted([d for d in os.listdir(root_dir) if os.path.isdir(os.path.join(root_dir, d))])
         self.class_to_idx = {cls_name: idx for idx, cls_name in enumerate(self.classes)}
@@ -47,10 +47,10 @@ class AnimalDataset(Dataset):
 
 
 def get_train_transforms():
-    """Training transforms with data augmentation."""
+    """Training transforms with data augmentation, maintaining aspect ratio."""
     return transforms.Compose([
-        transforms.Resize((256, 256)),
-        transforms.RandomCrop((224, 224)),
+        transforms.Resize(256), 
+        transforms.RandomCrop((224, 224)), 
         transforms.RandomHorizontalFlip(p=0.5),
         transforms.RandomRotation(degrees=15),
         transforms.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0.1),
@@ -60,23 +60,22 @@ def get_train_transforms():
     ])
 
 def get_test_transforms():
-    """Test/validation transforms without augmentation."""
+    """Test/validation transforms"""
     return transforms.Compose([
-        transforms.Resize((224, 224)),
+        transforms.Resize(256), # Resize shortest side to 256
+        transforms.CenterCrop(224), # Take center crop
         transforms.ToTensor(),
         transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
     ])
 
 def dataloaders(batch_size=32):
     """Create dataloaders for animal classification using ImageFolder structure."""
-    dataset_dir = './animal_data'
+    dataset_dir = './Animals-10'
     
     train_dataset = AnimalDataset(root_dir=dataset_dir + '/train', transform=get_train_transforms())
-    val_dataset = AnimalDataset(root_dir=dataset_dir + '/val', transform=get_test_transforms())
     test_dataset = AnimalDataset(root_dir= dataset_dir + '/test', transform=get_test_transforms())
 
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=2)
-    val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, num_workers=2)
     test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False, num_workers=2)
     
-    return train_dataset.classes, train_loader, val_loader, test_loader
+    return train_dataset.classes, train_loader, test_loader
